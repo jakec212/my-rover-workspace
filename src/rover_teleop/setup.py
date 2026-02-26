@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'joy_to_twist = rover_teleop.joy_to_twist:main',
             'old_science_mod_node = rover_teleop.old_science_mod_controller:main',
+            'new_science_mod_node = rover_teleop.new_science_mod_controller:main',
         ],
     },
 )
