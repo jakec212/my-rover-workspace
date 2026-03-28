@@ -31,7 +31,7 @@ const double GEAR_RATIO = 25; // motor gear ratio
 const double MAX_RPM = Kv * VOLTAGE_MAX / GEAR_RATIO; // Max RPM at max voltage
 const double MAX_VELOCITY = MAX_RPM * WHEEL_RADIUS * 2 * PI / 60; // (2.09 m/s) Max linear velocity in m/s of rover (2.09 m/s)
 
-const double MAX_DESIRED_WHEEL_SPEED = 0.6;  // Speed limit that you put on the rover
+const double MAX_DESIRED_WHEEL_SPEED = 0.5;  // Speed limit that you put on the rover
 
 // ========== DIFFERENTIAL DRIVE OBJECTS ==========
 Servo left_motor;
@@ -95,17 +95,17 @@ void setNeutralPWM() {
 
 //=====================================================================================================================================
 void setMotorPWM(double left_vel, double right_vel) {
-  // Convert velocity (-0.5 to 0.5) to PWM (1000 to 2000)
-  // 0.5 m/s = 2000, 0 m/s = 1500, -0.5 m/s = 1000
+  // Use the global constants defined at the top (1000, 1500, 2000)
+  // We calculate the scaled output based on your desired speed limits
+  
+  // Map the velocities (-1.0 to 1.0) to the PWM range defined by your limits
+  // left_vel and right_vel come from (linear +/- angular)
+  
+  float left_out = 1500 + (left_vel * 500 * (MAX_DESIRED_WHEEL_SPEED / MAX_VELOCITY));
+  float right_out = 1500 + (right_vel * 500 * (MAX_DESIRED_WHEEL_SPEED / MAX_VELOCITY));
 
-  int MAX_PWM = map(MAX_DESIRED_WHEEL_SPEED, 0, MAX_VELOCITY, 1500, 2000); // Map max desired speed to a PWM value
-  int MIN_PWM = map(-MAX_DESIRED_WHEEL_SPEED, -MAX_VELOCITY, 0, 1000, 1500); // Map min desired speed to a PWM value
-
-  int left_pwm = map(left_vel * MAX_DESIRED_WHEEL_SPEED, -MAX_DESIRED_WHEEL_SPEED, MAX_DESIRED_WHEEL_SPEED, MIN_PWM, MAX_PWM);
-  int right_pwm = map(right_vel * MAX_DESIRED_WHEEL_SPEED, -MAX_DESIRED_WHEEL_SPEED, MAX_DESIRED_WHEEL_SPEED, MIN_PWM, MAX_PWM);
-
-  left_motor.writeMicroseconds(constrain(left_pwm, MIN_PWM, MAX_PWM));
-  right_motor.writeMicroseconds(constrain(right_pwm, MIN_PWM, MAX_PWM));
+  left_motor.writeMicroseconds(constrain((int)left_out, MIN_PWM, MAX_PWM));
+  right_motor.writeMicroseconds(constrain((int)right_out, MIN_PWM, MAX_PWM));
 }
 
 //====================================================================================================================================
@@ -180,78 +180,64 @@ void setup() {
 
   Serial.println("DEBUG: Starting setup...");
 
-  // ===== Setup Differential Drive Motors =====
+  // ===== Setup Motors =====
   left_motor.attach(LEFT_MOTOR_PIN);
   right_motor.attach(RIGHT_MOTOR_PIN);
   setNeutralPWM();
-  Serial.println("DEBUG: Drive motors initialized");
-
-  // ===== Setup Science Module Motors =====
+  
   auger_motor.attach(AUGER_MOTOR_PIN);
   auger_motor.writeMicroseconds(NEUTRAL_PWM);
   actuator_motor.attach(ACTUATOR_MOTOR_PIN);
   actuator_motor.writeMicroseconds(NEUTRAL_PWM);
+  
   carousel_stepper.setMaxSpeed(STEPPER_MAX_SPEED);
   carousel_stepper.setAcceleration(STEPPER_ACCELERATION);
   plunger_stepper.setMaxSpeed(STEPPER_MAX_SPEED);
   plunger_stepper.setAcceleration(STEPPER_ACCELERATION);
-  Serial.println("DEBUG: Science motors initialized");
 
-  delay(2000);
-
-  // ===== Setup Micro-ROS =====
-  Serial.println("DEBUG: Setting up micro-ROS transports...");
+  // Replace your fixed delay(2000) before micro-ROS setup with this:
   set_microros_transports();
   allocator = rcl_get_default_allocator();
 
-  // Point science_msg to static buffer - no malloc needed
+  // Wait until agent is available
+  while (RMW_RET_OK != rmw_uros_ping_agent(100, 10)) {
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    delay(100);
+  }
+  digitalWrite(LED_BUILTIN, HIGH);
+
+  // FIX: Set size to 0 initially. The capacity is what matters for the buffer.
   science_msg.data.data = science_data_buffer;
   science_msg.data.capacity = SCIENCE_DATA_LEN;
-  science_msg.data.size = SCIENCE_DATA_LEN;
+  science_msg.data.size = 0; 
   memset(science_data_buffer, 0, sizeof(science_data_buffer));
 
-  Serial.println("DEBUG: Initializing support...");
   RCCHECK(rclc_support_init(&support, 0, NULL, &allocator));
-  Serial.println("DEBUG: Support initialized");
-
-  Serial.println("DEBUG: Initializing node...");
   RCCHECK(rclc_node_init_default(&node, "motor_driver_node", "", &support));
-  Serial.println("DEBUG: Node initialized");
 
-  Serial.println("DEBUG: Creating twist subscriber...");
   RCCHECK(rclc_subscription_init_default(
-    &twist_subscriber,
-    &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-    "cmd_vel"));
-  Serial.println("DEBUG: Twist subscriber created");
+    &twist_subscriber, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "cmd_vel"));
 
-  Serial.println("DEBUG: Creating science subscriber...");
   RCCHECK(rclc_subscription_init_default(
-    &science_subscriber,
-    &node,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
-    "/new_science_module/commands"));
-  Serial.println("DEBUG: Science subscriber created");
+    &science_subscriber, &node,
+    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray), "/new_science_module/commands"));
 
-  Serial.println("DEBUG: Creating timer...");
-  RCCHECK(rclc_timer_init_default2(
-    &timer,
-    &support,
-    RCL_MS_TO_NS(100),
-    timer_callback,
-    true));
-  Serial.println("DEBUG: Timer created");
+  RCCHECK(rclc_timer_init_default2(&timer, &support, RCL_MS_TO_NS(100), timer_callback, true));
 
-  Serial.println("DEBUG: Initializing executor...");
-  RCCHECK(rclc_executor_init(&executor, &support.context, 3, &allocator));
+  // FIX: Increased handle count to 4 to prevent resource exhaustion errors
+  RCCHECK(rclc_executor_init(&executor, &support.context, 4, &allocator));
+  
   RCCHECK(rclc_executor_add_subscription(&executor, &twist_subscriber, &twist_msg, &twist_callback, ON_NEW_DATA));
   RCCHECK(rclc_executor_add_subscription(&executor, &science_subscriber, &science_msg, &science_callback, ON_NEW_DATA));
   RCCHECK(rclc_executor_add_timer(&executor, &timer));
-  Serial.println("DEBUG: Executor initialized");
 
   digitalWrite(LED_BUILTIN, LOW);
-  Serial.println("DEBUG: Setup complete! LED should be OFF now.");
+  Serial.println("DEBUG: Setup complete!");
+
+  pinMode(39, OUTPUT);
+  digitalWrite(39, HIGH);
+
 }
 
 // ========== LOOP ==========
