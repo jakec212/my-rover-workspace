@@ -169,12 +169,16 @@ void setup() {
   plunger_stepper.setAcceleration(STEPPER_ACCELERATION);
   Serial.println("DEBUG: Science motors initialized");
 
-  delay(2000);
-
-  // ===== Setup Micro-ROS =====
-  Serial.println("DEBUG: Setting up micro-ROS transports...");
+  // Replace your fixed delay(2000) before micro-ROS setup with this:
   set_microros_transports();
   allocator = rcl_get_default_allocator();
+
+  // Wait until agent is available
+  while (RMW_RET_OK != rmw_uros_ping_agent(100, 10)) {
+    digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+    delay(100);
+  }
+  digitalWrite(LED_BUILTIN, HIGH);
 
   // Point science_msg to static buffer - no malloc needed
   science_msg.data.data = science_data_buffer;

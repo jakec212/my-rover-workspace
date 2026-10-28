@@ -200,7 +200,7 @@ void setup() {
   allocator = rcl_get_default_allocator();
 
   // Wait until agent is available
-  while (RMW_RET_OK != rmw_uros_ping_agent(100, 10)) {
+  while (RMW_RET_OK != rmw_uros_ping_agent(200, 25)) {
     digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
     delay(100);
   }
@@ -218,6 +218,9 @@ void setup() {
   RCCHECK(rclc_subscription_init_default(
     &twist_subscriber, &node,
     ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist), "cmd_vel"));
+
+
+  delay(2000);
 
   RCCHECK(rclc_subscription_init_default(
     &science_subscriber, &node,
